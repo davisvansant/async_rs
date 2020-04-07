@@ -1,5 +1,6 @@
 [workspace]
 members = [
   "futures",
-  "tasks"
+  "tasks",
+  "chat"
 ]
