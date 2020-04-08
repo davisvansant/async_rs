@@ -4,8 +4,24 @@ use async_std::{
     net::{TcpListener, ToSocketAddrs, TcpStream},
     io::BufReader
 };
+use futures::channel::mpsc;
+use futures::sink::SinkExt;
+use std::sync::Arc;
 
+type Sender<T> = mpsc::UnboundedSender<T>;
+type Receiver<T> = mpsc::UnboundedReceiver<T>;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+async fn connection_writer_loop(
+    mut messages: Receiver<String>,
+    stream: Arc<TcpStream>,
+) -> Result<()> {
+    let mut stream = &*stream;
+    while let Some(msg) = messages.next().await {
+        stream.write_all(msg.as_bytes()).await?;
+    }
+    Ok(())
+}
 
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
