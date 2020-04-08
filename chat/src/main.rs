@@ -67,19 +67,25 @@ async fn connection_writer_loop(
 
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
+
+    let (broker_sender, broker_receiver) = mpsc::unbounded();
+    let _broker_handle = task::spawn(broker_loop(broker_receiver));
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
         println!("Accepting from: {}", stream.peer_addr()?);
-        let handle = task::spawn(connection_loop(stream));
-        handle.await?
+        // let handle = task::spawn(connection_loop(stream));
+        // handle.await?
+        spawn_and_log_error(connection_loop(broker_sender.clone(), stream));
+        // Ok(())
     }
 
     Ok(())
 }
 
-async fn connection_loop(stream: TcpStream) -> Result<()> {
-    let reader = BufReader::new(&stream);
+async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result<()> {
+    let stream = Arc::new(stream);
+    let reader = BufReader::new(&*stream);
     let mut lines = reader.lines();
 
     let name = match lines.next().await {
@@ -87,6 +93,7 @@ async fn connection_loop(stream: TcpStream) -> Result<()> {
         Some(line) => line?,
     };
     println!("name = {:?}", name);
+    broker.send(Event::NewPeer { name: name.clone(), stream: Arc::clone(&stream) }).await.unwrap();
 
     while let Some(line) = lines.next().await {
         let line = line?;
@@ -94,8 +101,14 @@ async fn connection_loop(stream: TcpStream) -> Result<()> {
             None => continue,
             Some(idx) => (&line[..idx], line[idx + 1 ..].trim()),
         };
-        let dist: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
+        let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
         let msg: String = msg.to_string();
+
+        broker.send(Event::Message {
+            from: name.clone(),
+            to: dest,
+            msg,
+        }).await.unwrap();
     }
     Ok(())
 }
@@ -112,8 +125,9 @@ where
 }
 
 fn run() -> Result<()> {
-    let fut = accept_loop("127.0.0.1:8080");
-    task::block_on(fut)
+    // let fut = accept_loop("127.0.0.1:8080");
+    // task::block_on(fut)
+    task::block_on(accept_loop("127.0.0.1:8080"))
 }
 
 fn main() {
